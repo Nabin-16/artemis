@@ -1,0 +1,506 @@
+#include <ArduinoJson.h>
+#include <ESPAsyncWebServer.h>
+#include <WiFi.h>
+#include <map>
+
+const char *ssid = "esp32";
+const char *password = "1234567890";
+
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
+
+// User session management
+struct UserSession
+{
+    String username;
+    String deviceId;
+    uint32_t clientId;
+    unsigned long lastSeen;
+    bool dataSharingEnabled;
+    bool disconnectPending;
+    unsigned long disconnectTime;
+};
+
+std::map<uint32_t, UserSession> activeSessions;
+unsigned long DISCONNECT_TIMEOUT = 60000; // 1 minute for admin response
+
+// HTML/JS code for the phone's browser
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Artemis - Safe Connect</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #e0e0e0; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        h2 { color: #fff; margin-bottom: 10px; font-size: 2em; }
+        .subtitle { color: rgba(255,255,255,0.8); margin-bottom: 30px; }
+        .card { background-color: rgba(255,255,255,0.95); color: #333; padding: 25px; border-radius: 16px; box-shadow: 0 8px 16px rgba(0,0,0,0.3); width: 100%; max-width: 400px; margin-bottom: 20px; }
+        .registration-card { display: block; }
+        .dashboard-card { display: none; }
+        input { width: 100%; padding: 12px; margin: 8px 0; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+        input:focus { outline: none; border-color: #667eea; }
+        .status-box { font-weight: bold; font-size: 1.2em; text-align: center; margin-bottom: 10px; padding: 10px; border-radius: 8px; }
+        .disconnected { background-color: #ffe5e5; color: #d32f2f; }
+        .connected { background-color: #e8f5e9; color: #2e7d32; }
+        .btn-container { display: flex; gap: 10px; width: 100%; margin-top: 15px; }
+        button { flex: 1; padding: 15px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+        button:active { transform: scale(0.98); }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .btn-start { background-color: #00adb5; color: white; }
+        .btn-stop { background-color: #ff5252; color: white; }
+        .data-label { font-size: 0.9em; color: #666; display: block; margin-bottom: 5px; font-weight: 600; }
+        .data-value { font-family: 'Courier New', monospace; font-size: 1.1em; color: #333; background: #f5f5f5; padding: 10px; border-radius: 6px; }
+        .user-info { background: #f0f0f0; padding: 10px; border-radius: 8px; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <h2>🛡️ Artemis</h2>
+    <p class="subtitle">Safe Connect Monitoring</p>
+    
+    <!-- Registration Form -->
+    <div class="card registration-card" id="registrationCard">
+        <h3 style="margin-top: 0; color: #667eea;">👤 User Registration</h3>
+        <input type="text" id="username" placeholder="Enter your name" required>
+        <input type="text" id="deviceId" placeholder="Device unique ID" required>
+        <div class="btn-container">
+            <button class="btn-primary" onclick="registerUser()">Register & Connect</button>
+        </div>
+    </div>
+
+    <!-- Dashboard (hidden until registered) -->
+    <div class="card dashboard-card" id="dashboardCard">
+        <div class="user-info">
+            <div><strong>User:</strong> <span id="displayUsername"></span></div>
+            <div><strong>Device:</strong> <span id="displayDeviceId"></span></div>
+        </div>
+        <div class="status-box disconnected" id="statusBox">
+            Status: <span id="status">Disconnected</span>
+        </div>
+        <div class="btn-container">
+            <button class="btn-start" onclick="startSharing()">🚀 Start Sharing</button>
+            <button class="btn-stop" onclick="stopSharing()">⏸ Stop</button>
+        </div>
+    </div>
+
+    <div class="card dashboard-card" id="gpsCard">
+        <span class="data-label">📍 GPS Location</span>
+        <div class="data-value" id="gps">Waiting for signal...</div>
+    </div>
+
+    <div class="card dashboard-card" id="imuCard">
+        <span class="data-label">🧭 IMU Sensor</span>
+        <div class="data-value" id="imu">Waiting for data...</div>
+    </div>
+
+<script>
+    var socket = null;
+    var gpsWatchId = null;
+    var imuActive = false;
+    var userData = { username: '', deviceId: '' };
+    
+    function initWebSocket() {
+        socket = new WebSocket('ws://' + window.location.hostname + '/ws');
+        
+        socket.onopen = () => { 
+            updateStatus('Connected', true);
+            // Send registration immediately
+            socket.send(JSON.stringify({
+                type: 'REGISTER',
+                username: userData.username,
+                deviceId: userData.deviceId
+            }));
+        };
+        
+        socket.onclose = () => {
+            updateStatus('Disconnected', false);
+            setTimeout(initWebSocket, 3000); // Auto-reconnect
+        };
+        
+        socket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+
+        socket.onmessage = (event) => {
+            try {
+                var data = JSON.parse(event.data);
+                if (data.type === "GPS") {
+                     document.getElementById('gps').innerText = 
+                        `${parseFloat(data.lat).toFixed(6)}, ${parseFloat(data.lon).toFixed(6)}`;
+                } else if (data.type === "IMU") {
+                     document.getElementById('imu').innerText = 
+                        `α:${parseFloat(data.alpha).toFixed(1)}° β:${parseFloat(data.beta).toFixed(1)}° γ:${parseFloat(data.gamma).toFixed(1)}°`;
+                } else if (data.type === "REGISTERED") {
+                    console.log('Registration confirmed');
+                }
+            } catch(e) { console.error(e); }
+        };
+    }
+    
+    function updateStatus(text, isConnected) {
+        var el = document.getElementById('status');
+        var box = document.getElementById('statusBox');
+        el.innerText = text;
+        box.className = 'status-box ' + (isConnected ? 'connected' : 'disconnected');
+    }
+    
+    function registerUser() {
+        var username = document.getElementById('username').value.trim();
+        var deviceId = document.getElementById('deviceId').value.trim();
+        
+        if (!username || !deviceId) {
+            alert('Please enter both username and device ID');
+            return;
+        }
+        
+        userData.username = username;
+        userData.deviceId = deviceId;
+        
+        // Show dashboard, hide registration
+        document.getElementById('registrationCard').style.display = 'none';
+        document.querySelectorAll('.dashboard-card').forEach(el => el.style.display = 'block');
+        document.getElementById('displayUsername').innerText = username;
+        document.getElementById('displayDeviceId').innerText = deviceId;
+        
+        initWebSocket();
+    }
+
+    function startSharing() {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            alert('Not connected to server');
+            return;
+        }
+        
+        // Enable data sharing flag
+        socket.send(JSON.stringify({
+            type: 'ENABLE_SHARING',
+            enabled: true
+        }));
+        
+        if (navigator.geolocation) {
+            gpsWatchId = navigator.geolocation.watchPosition((pos) => {
+                var data = { 
+                    type:"GPS", 
+                    username: userData.username,
+                    deviceId: userData.deviceId,
+                    lat:pos.coords.latitude, 
+                    lon:pos.coords.longitude,
+                    alt:pos.coords.altitude || 0,
+                    accuracy:pos.coords.accuracy
+                };
+                socket.send(JSON.stringify(data));
+                document.getElementById('gps').innerText = 
+                    `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`;
+            }, (error) => {
+                console.error('GPS Error:', error);
+                let msg = error.message;
+                if (msg.includes("secure origin") || error.code === 1) {
+                    msg += " - Enable location permissions";
+                }
+                document.getElementById('gps').innerHTML = 'Error: ' + msg;
+            }, {enableHighAccuracy:true, maximumAge:0, timeout:5000});
+        }
+        
+        if (window.DeviceOrientationEvent) {
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            startIMU();
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                startIMU();
+            }
+        }
+        
+        function startIMU() {
+            imuActive = true;
+            window.addEventListener('deviceorientation', handleOrientation);
+        }
+    }
+    
+    function handleOrientation(event) {
+        if (!imuActive || !socket || socket.readyState !== WebSocket.OPEN) return;
+        var data = { 
+            type:"IMU", 
+            username: userData.username,
+            deviceId: userData.deviceId,
+            alpha:event.alpha || 0, 
+            beta:event.beta || 0, 
+            gamma:event.gamma || 0 
+        };
+        socket.send(JSON.stringify(data));
+        document.getElementById('imu').innerText = 
+            `α:${(event.alpha||0).toFixed(1)}° β:${(event.beta||0).toFixed(1)}° γ:${(event.gamma||0).toFixed(1)}°`;
+    }
+    
+    function stopSharing() {
+        if (gpsWatchId !== null) {
+            navigator.geolocation.clearWatch(gpsWatchId);
+            gpsWatchId = null;
+        }
+        imuActive = false;
+        window.removeEventListener('deviceorientation', handleOrientation);
+        
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+                type: 'ENABLE_SHARING',
+                enabled: false
+            }));
+        }
+    }
+</script></body></html>)rawliteral";
+
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
+               AwsEventType type, void *arg, uint8_t *data, size_t len)
+{
+    if (type == WS_EVT_CONNECT)
+    {
+        Serial.printf("WebSocket client #%u connected from %s\n", client->id(),
+                      client->remoteIP().toString().c_str());
+    }
+    else if (type == WS_EVT_DISCONNECT)
+    {
+        Serial.printf("WebSocket client #%u disconnected\n", client->id());
+
+        // Check if this was a registered user
+        if (activeSessions.find(client->id()) != activeSessions.end())
+        {
+            UserSession &session = activeSessions[client->id()];
+            session.disconnectPending = true;
+            session.disconnectTime = millis();
+
+            // Notify all clients (especially laptop dashboard) about disconnect
+            JsonDocument alertDoc;
+            alertDoc["type"] = "USER_DISCONNECT";
+            alertDoc["username"] = session.username;
+            alertDoc["deviceId"] = session.deviceId;
+            alertDoc["timestamp"] = millis();
+            alertDoc["awaitingResponse"] = true;
+
+            String alertMsg;
+            serializeJson(alertDoc, alertMsg);
+            ws.textAll(alertMsg);
+
+            Serial.printf("⚠️ User %s (Device: %s) disconnected - awaiting admin confirmation\n",
+                          session.username.c_str(), session.deviceId.c_str());
+        }
+    }
+    else if (type == WS_EVT_DATA)
+    {
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, (const char *)data, len);
+
+        if (!error)
+        {
+            String msgType = doc["type"].as<String>();
+
+            // Handle user registration
+            if (msgType == "REGISTER")
+            {
+                UserSession session;
+                session.username = doc["username"].as<String>();
+                session.deviceId = doc["deviceId"].as<String>();
+                session.clientId = client->id();
+                session.lastSeen = millis();
+                session.dataSharingEnabled = false;
+                session.disconnectPending = false;
+
+                activeSessions[client->id()] = session;
+
+                // Send confirmation
+                JsonDocument confirmDoc;
+                confirmDoc["type"] = "REGISTERED";
+                confirmDoc["success"] = true;
+                String confirmMsg;
+                serializeJson(confirmDoc, confirmMsg);
+                client->text(confirmMsg);
+
+                // Notify all clients about new user
+                JsonDocument notifyDoc;
+                notifyDoc["type"] = "USER_CONNECTED";
+                notifyDoc["username"] = session.username;
+                notifyDoc["deviceId"] = session.deviceId;
+                notifyDoc["clientId"] = client->id();
+                String notifyMsg;
+                serializeJson(notifyDoc, notifyMsg);
+                ws.textAll(notifyMsg);
+
+                Serial.printf("✅ User registered: %s (Device: %s)\n",
+                              session.username.c_str(), session.deviceId.c_str());
+            }
+            // Handle data sharing toggle
+            else if (msgType == "ENABLE_SHARING")
+            {
+                if (activeSessions.find(client->id()) != activeSessions.end())
+                {
+                    activeSessions[client->id()].dataSharingEnabled = doc["enabled"].as<bool>();
+                    Serial.printf("Data sharing %s for user %s\n",
+                                  doc["enabled"].as<bool>() ? "enabled" : "disabled",
+                                  activeSessions[client->id()].username.c_str());
+                }
+            }
+            // Handle admin response to disconnect alert
+            else if (msgType == "ADMIN_RESPONSE")
+            {
+                String deviceId = doc["deviceId"].as<String>();
+                bool isFalseAlarm = doc["falseAlarm"].as<bool>();
+
+                // Find and remove the session
+                for (auto it = activeSessions.begin(); it != activeSessions.end();)
+                {
+                    if (it->second.deviceId == deviceId && it->second.disconnectPending)
+                    {
+                        Serial.printf("Admin marked disconnect as %s for device %s\n",
+                                      isFalseAlarm ? "FALSE ALARM" : "TRUE DISCONNECT",
+                                      deviceId.c_str());
+                        it = activeSessions.erase(it);
+
+                        // Notify all clients
+                        JsonDocument responseDoc;
+                        responseDoc["type"] = "DISCONNECT_RESOLVED";
+                        responseDoc["deviceId"] = deviceId;
+                        responseDoc["falseAlarm"] = isFalseAlarm;
+                        String responseMsg;
+                        serializeJson(responseDoc, responseMsg);
+                        ws.textAll(responseMsg);
+                        break;
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+            }
+            // Handle GPS data
+            else if (msgType == "GPS")
+            {
+                if (activeSessions.find(client->id()) != activeSessions.end())
+                {
+                    UserSession &session = activeSessions[client->id()];
+                    session.lastSeen = millis();
+
+                    if (session.dataSharingEnabled)
+                    {
+                        JsonDocument outputDoc;
+                        outputDoc["type"] = "GPS";
+                        outputDoc["username"] = session.username;
+                        outputDoc["deviceId"] = session.deviceId;
+                        outputDoc["lat"] = doc["lat"];
+                        outputDoc["lon"] = doc["lon"];
+                        outputDoc["alt"] = doc["alt"];
+                        outputDoc["accuracy"] = doc["accuracy"];
+                        outputDoc["timestamp"] = millis();
+
+                        String output;
+                        serializeJson(outputDoc, output);
+                        Serial.println(output);
+                        ws.textAll(output);
+                    }
+                }
+            }
+            // Handle IMU data
+            else if (msgType == "IMU")
+            {
+                if (activeSessions.find(client->id()) != activeSessions.end())
+                {
+                    UserSession &session = activeSessions[client->id()];
+                    session.lastSeen = millis();
+
+                    if (session.dataSharingEnabled)
+                    {
+                        JsonDocument outputDoc;
+                        outputDoc["type"] = "IMU";
+                        outputDoc["username"] = session.username;
+                        outputDoc["deviceId"] = session.deviceId;
+                        outputDoc["alpha"] = doc["alpha"];
+                        outputDoc["beta"] = doc["beta"];
+                        outputDoc["gamma"] = doc["gamma"];
+                        outputDoc["timestamp"] = millis();
+
+                        String output;
+                        serializeJson(outputDoc, output);
+                        Serial.println(output);
+                        ws.textAll(output);
+                    }
+                }
+            }
+        }
+        else
+        {
+            Serial.print("JSON parse error: ");
+            Serial.println(error.c_str());
+        }
+    }
+}
+
+void setup()
+{
+    Serial.begin(115200);
+    delay(1000);
+
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(ssid, password);
+
+    IPAddress IP = WiFi.softAPIP();
+    Serial.println("\n=============================");
+    Serial.println("ESP32 GPS/IMU Server Started");
+    Serial.println("=============================");
+    Serial.print("AP SSID: ");
+    Serial.println(ssid);
+    Serial.print("AP IP Address: ");
+    Serial.println(IP);
+    Serial.println("Connect your phone to this WiFi");
+    Serial.print("Then open: http://");
+    Serial.println(IP);
+    Serial.println("=============================\n");
+
+    ws.onEvent(onWsEvent);
+    server.addHandler(&ws);
+
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+              { request->send(200, "text/html", index_html); });
+
+    server.begin();
+}
+
+void loop()
+{
+    ws.cleanupClients();
+    // Check for pending disconnects that need admin response
+    unsigned long currentTime = millis();
+    for (auto it = activeSessions.begin(); it != activeSessions.end();)
+    {
+        if (it->second.disconnectPending)
+        {
+            if (currentTime - it->second.disconnectTime > DISCONNECT_TIMEOUT)
+            {
+                // Timeout - automatically mark as true disconnect
+                Serial.printf("⏰ Timeout: Auto-confirming disconnect for device %s\n",
+                              it->second.deviceId.c_str());
+
+                JsonDocument timeoutDoc;
+                timeoutDoc["type"] = "DISCONNECT_TIMEOUT";
+                timeoutDoc["deviceId"] = it->second.deviceId;
+                timeoutDoc["username"] = it->second.username;
+                String timeoutMsg;
+                serializeJson(timeoutDoc, timeoutMsg);
+                ws.textAll(timeoutMsg);
+
+                it = activeSessions.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        else
+        {
+            ++it;
+        }
+    }
+    delay(1);
+}

@@ -1,0 +1,323 @@
+:root {
+    --bg-dark: #0f172a;
+    --bg-card: #1e293b;
+    --bg-sidebar: #020617;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --accent-primary: #38bdf8;
+    --accent-hover: #0ea5e9;
+    --status-online: #22c55e;
+    --status-offline: #ef4444;
+    --danger-bg: rgba(239, 68, 68, 0.1);
+    --border-color: #334155;
+    --shadow-soft: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    background-color: var(--bg-dark);
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+
+/* Common Components */
+.btn {
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.5rem;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-primary {
+    background-color: var(--accent-primary);
+    color: #000;
+}
+
+.btn-primary:hover {
+    background-color: var(--accent-hover);
+}
+
+input {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+input:focus {
+    border-color: var(--accent-primary);
+}
+
+/* LOGIN PAGE */
+.login-container {
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+}
+
+.login-card {
+    background-color: var(--bg-card);
+    padding: 2.5rem;
+    border-radius: 1rem;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--border-color);
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.login-header h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--accent-primary);
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.error-msg {
+    color: var(--status-offline);
+    font-size: 0.875rem;
+    text-align: center;
+    min-height: 1.25rem;
+}
+
+/* DASHBOARD LAYOUT */
+.dashboard-container {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* SIDEBAR */
+.sidebar {
+    background-color: var(--bg-sidebar);
+    border-right: 1px solid var(--border-color);
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.brand {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--accent-primary);
+    margin-bottom: 2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.nav-links {
+    list-style: none;
+}
+
+.nav-item {
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+}
+
+.nav-item:hover,
+.nav-item.active {
+    background-color: var(--bg-card);
+    color: var(--text-primary);
+}
+
+.user-profile {
+    margin-top: auto;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.user-avatar {
+    width: 2.5rem;
+    height: 2.5rem;
+    background-color: var(--accent-primary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    color: #000;
+}
+
+/* MAIN CONTENT */
+.main-content {
+    padding: 2rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+}
+
+.stat-card {
+    background-color: var(--bg-card);
+    padding: 1.5rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--border-color);
+}
+
+.stat-label {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-bottom: 0.5rem;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+/* MAP & DEVICES SPLIT */
+.content-split {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1.5rem;
+    flex: 1;
+    min-height: 400px;
+}
+
+.map-container {
+    background-color: var(--bg-card);
+    border-radius: 0.75rem;
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+    position: relative;
+    height: 100%;
+    min-height: 400px;
+}
+
+#map {
+    height: 100%;
+    width: 100%;
+    z-index: 1;
+}
+
+.devices-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    overflow-y: auto;
+    max-height: calc(100vh - 250px);
+    padding-right: 0.5rem;
+}
+
+/* DEVICE CARDS */
+.device-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    transition: transform 0.2s;
+    cursor: pointer;
+}
+
+.device-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent-primary);
+}
+
+.device-card.out-of-range {
+    border-color: var(--status-offline);
+    background-color: rgba(239, 68, 68, 0.05);
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.device-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.status-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 999px;
+    font-weight: 600;
+}
+
+.status-badge.online {
+    background-color: rgba(34, 197, 94, 0.1);
+    color: var(--status-online);
+}
+
+.status-badge.offline {
+    background-color: rgba(239, 68, 68, 0.1);
+    color: var(--status-offline);
+}
+
+.card-body {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.4rem;
+}
+
+.last-seen {
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    display: block;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-dark);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}

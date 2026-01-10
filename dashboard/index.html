@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS Admin Login</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <h1>Artemis Admin</h1>
+                <p style="color: var(--text-secondary);">Sign in to access GPS telemetry</p>
+            </div>
+
+            <form class="login-form" onsubmit="event.preventDefault(); login();">
+                <div>
+                    <input type="text" id="username" placeholder="Username" style="width: 100%" required>
+                </div>
+                <div>
+                    <input type="password" id="password" placeholder="Password" style="width: 100%" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Sign In</button>
+            </form>
+            <div id="error" class="error-msg" style="margin-top: 1rem;"></div>
+        </div>
+    </div>
+    <script src="auth.js"></script>
+</body>
+
+</html>
