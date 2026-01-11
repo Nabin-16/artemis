@@ -14,7 +14,7 @@ const char *HOME_WIFI_PASSWORD = "02242005";
 // ====== Flask Server Configuration ======
 // Change this to your laptop's IP address
 // Find it by running 'ipconfig' in Windows (look for IPv4 Address)
-const char *FLASK_SERVER_IP = "10.101.79.87";
+const char *FLASK_SERVER_IP = "10.242.232.87";
 const int FLASK_SERVER_PORT = 5000;
 
 // ====== WebSocket Configuration ======

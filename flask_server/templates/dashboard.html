@@ -164,6 +164,38 @@
             min-width: 250px;
         }
 
+        .map-controls {
+            position: absolute;
+            top: 20px;
+            left: 60px;
+            /* To right of zoom controls */
+            z-index: 1000;
+            display: flex;
+            gap: 10px;
+        }
+
+        .control-btn {
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            border: 1px solid #444;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .control-btn:hover {
+            background: #333;
+        }
+
+        .control-btn.active {
+            background: #4caf50;
+            border-color: #4caf50;
+        }
+
         .sensor-data {
             margin-top: 10px;
         }
@@ -189,6 +221,52 @@
             text-align: center;
             padding: 40px;
             color: #666;
+        }
+
+        /* Custom Pulse Marker */
+        .gps-marker-icon {
+            background-color: #2196F3;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+            position: relative;
+        }
+
+        .gps-marker-pulse {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: rgba(33, 150, 243, 0.4);
+            animation: gps-pulse 2s infinite;
+            z-index: -1;
+        }
+
+        .gps-arrow {
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 20px solid #f44336;
+            filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
+            transform-origin: center bottom;
+        }
+
+        @keyframes gps-pulse {
+            0% {
+                transform: translate(-50%, -50%) scale(1);
+                opacity: 0.8;
+            }
+
+            100% {
+                transform: translate(-50%, -50%) scale(4);
+                opacity: 0;
+            }
         }
     </style>
 </head>
@@ -225,6 +303,16 @@
 
         <div class="map-container">
             <div id="map"></div>
+
+            <div class="map-controls">
+                <button class="control-btn" id="btnFollow" onclick="toggleFollow()">
+                    📍 Follow Device
+                </button>
+                <button class="control-btn" onclick="fitAllDevices()">
+                    🔍 Fit All
+                </button>
+            </div>
+
             <div class="map-overlay" id="deviceDetails" style="display: none;">
                 <h3 style="margin-bottom: 10px; color: #667eea;" id="selectedDeviceName">Device Info</h3>
                 <div class="sensor-data">
@@ -272,8 +360,13 @@
     </div>
 
     <script>
-        // Initialize map
-        const map = L.map('map').setView([27.7000, 85.3000], 12);
+        // Initialize map with zoom controls enabled by default
+        const map = L.map('map', {
+            zoomControl: true,
+            scrollWheelZoom: true,
+            doubleClickZoom: true
+        }).setView([26.8065, 87.2846], 13); // Default to Dharan instead of Kathmandu
+
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             attribution: '&copy; OpenStreetMap contributors',
             maxZoom: 20
@@ -282,6 +375,37 @@
         const markers = new Map();
         const devices = new Map();
         let selectedDevice = null;
+        let followMode = false;
+        let hasCenteredMap = false; // Flag to check if we've auto-centered once
+
+        // Previous GPS point for filtering
+        const lastPositions = new Map();
+
+        function toggleFollow() {
+            followMode = !followMode;
+            const btn = document.getElementById('btnFollow');
+            if (followMode) {
+                btn.classList.add('active');
+                if (selectedDevice) {
+                    const dev = devices.get(selectedDevice);
+                    if (dev && dev.gps) {
+                        map.flyTo([dev.gps.lat, dev.gps.lon], 18);
+                    }
+                }
+            } else {
+                btn.classList.remove('active');
+            }
+        }
+
+        function fitAllDevices() {
+            followMode = false;
+            document.getElementById('btnFollow').classList.remove('active');
+
+            if (markers.size > 0) {
+                const group = new L.featureGroup(Array.from(markers.values()));
+                map.fitBounds(group.getBounds().pad(0.1));
+            }
+        }
 
         // Initialize Socket.IO
         const socket = io();
@@ -338,9 +462,47 @@
             devices.set(device.deviceId, device);
             updateDeviceList();
             updateDeviceCount();
+
+            // Setup marker if GPS data is available immediately
+            if (device.gps) {
+                updateMarker(device.deviceId, device.gps);
+            }
         }
 
         function updateDeviceGPS(deviceId, gps) {
+            // Basic validity check
+            if (!gps || (gps.lat === 0 && gps.lon === 0)) return;
+
+            // Filter out small jitter
+            const lastPos = lastPositions.get(deviceId);
+            if (lastPos) {
+                // Calculate distance in meters (haversine formula approximation)
+                const R = 6371e3; // metres
+                const φ1 = lastPos.lat * Math.PI / 180;
+                const φ2 = gps.lat * Math.PI / 180;
+                const Δφ = (gps.lat - lastPos.lat) * Math.PI / 180;
+                const Δλ = (gps.lon - lastPos.lon) * Math.PI / 180;
+
+                const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                    Math.cos(φ1) * Math.cos(φ2) *
+                    Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                const d = R * c;
+
+                // Ignore movements smaller than 4 meters (jitter)
+                // This allows slight changes to update while filtering out stationary noise
+                if (d < 4.0) {
+                    return;
+                }
+            }
+            lastPositions.set(deviceId, { lat: gps.lat, lon: gps.lon });
+
+            // Auto-center on the first valid GPS fix we receive
+            if (!hasCenteredMap) {
+                map.setView([gps.lat, gps.lon], 16);
+                hasCenteredMap = true;
+            }
+
             const device = devices.get(deviceId);
             if (!device) return;
 
@@ -349,6 +511,11 @@
 
             if (selectedDevice === deviceId) {
                 updateDeviceDetails(device);
+
+                // If follow mode is active, center map on this device
+                if (followMode) {
+                    map.panTo([gps.lat, gps.lon]);
+                }
             }
         }
 
@@ -372,10 +539,18 @@
         }
 
         function updateMarker(deviceId, gps) {
+            // Create a custom div icon
+            const customIcon = L.divIcon({
+                className: 'custom-gps-marker',
+                html: `<div class="gps-marker-icon"><div class="gps-marker-pulse"></div></div>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+
             if (markers.has(deviceId)) {
                 markers.get(deviceId).setLatLng([gps.lat, gps.lon]);
             } else {
-                const marker = L.marker([gps.lat, gps.lon]).addTo(map);
+                const marker = L.marker([gps.lat, gps.lon], { icon: customIcon }).addTo(map);
                 const device = devices.get(deviceId);
                 marker.bindPopup(`<b>${device.username}</b><br>${deviceId}`);
                 markers.set(deviceId, marker);

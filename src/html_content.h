@@ -5,7 +5,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Artemis User App</title>
+    <title>Artemis User App v2.0 (Live GPS)</title>
     <style>
         * {
             margin: 0;
@@ -429,51 +429,98 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
 
         function startSensorSimulation() {
-            // Simulate sensor data every 1 second
+            // 1. Start Real GPS Tracking (Geolocation API)
+            if ("geolocation" in navigator) {
+                navigator.geolocation.watchPosition(
+                    (position) => {
+                        const gpsData = {
+                            type: 'GPS',
+                            username: username,
+                            deviceId: deviceId,
+                            timestamp: Date.now(),
+                            lat: position.coords.latitude,
+                            lon: position.coords.longitude,
+                            alt: position.coords.altitude || 0,
+                            accuracy: position.coords.accuracy || 0, // Add accuracy
+                            speed: (position.coords.speed || 0) * 3.6 // Convert m/s to km/h
+                        };
+                        
+                        // Update UI
+                        document.getElementById('gpsLat').textContent = gpsData.lat.toFixed(6);
+                        document.getElementById('gpsLon').textContent = gpsData.lon.toFixed(6);
+                        document.getElementById('gpsAlt').textContent = gpsData.alt.toFixed(1) + ' m';
+                        document.getElementById('gpsSpeed').textContent = gpsData.speed.toFixed(1) + ' km/h';
+
+                        // Send to ESP32
+                        if (dataSharingEnabled && ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify(gpsData));
+                        }
+                    },
+                    (error) => {
+                        console.error("GPS Error: ", error);
+                        let errorMsg = "Unknown Error";
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED:
+                                errorMsg = "Permission Denied. Please Allow Location Access.";
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                errorMsg = "Signal Weak. Go outside.";
+                                break;
+                            case error.TIMEOUT:
+                                errorMsg = "Timeout. Retrying...";
+                                break;
+                        }
+                        alert("GPS Failed: " + errorMsg + "\n\nNote: Modern browsers inhibit GPS on HTTP. You may need to enable 'Insecure origins treated as secure' in chrome://flags if testing on Android.");
+                        
+                        // Valid fallback for testing if real GPS fails
+                        const fallbackData = {
+                            type: 'GPS',
+                            username: username,
+                            deviceId: deviceId,
+                            timestamp: Date.now(),
+                            lat: 26.8065,  // Dharan Center
+                            lon: 87.2846, 
+                            alt: 349,
+                            speed: 0
+                        };
+                        
+                        if (dataSharingEnabled && ws && ws.readyState === WebSocket.OPEN) {
+                             // Send fallback data so the user at least sees the dot
+                            ws.send(JSON.stringify(fallbackData));
+                        }
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        maximumAge: 0,
+                        timeout: 10000 
+                    }
+                );
+            } else {
+                alert("Geolocation is not supported by your browser");
+            }
+
+            // 2. Simulate IMU data (accelerometer/gyro)
+            // (Only simulating IMU because web browsers don't give raw IMU easily on all devices yet)
             sensorInterval = setInterval(() => {
-                // Simulate GPS data (random values around Kathmandu)
-                const gpsData = {
-                    type: 'GPS',
-                    username: username,
-                    deviceId: deviceId,
-                    timestamp: Date.now(),
-                    lat: 27.7000 + (Math.random() - 0.5) * 0.01,
-                    lon: 85.3000 + (Math.random() - 0.5) * 0.01,
-                    alt: 1400 + Math.random() * 100,
-                    speed: Math.random() * 50
-                };
-
-                // Update UI
-                document.getElementById('gpsLat').textContent = gpsData.lat.toFixed(6);
-                document.getElementById('gpsLon').textContent = gpsData.lon.toFixed(6);
-                document.getElementById('gpsAlt').textContent = gpsData.alt.toFixed(1) + ' m';
-                document.getElementById('gpsSpeed').textContent = gpsData.speed.toFixed(1) + ' km/h';
-
-                // Send to ESP32 if data sharing is enabled
-                if (dataSharingEnabled && ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify(gpsData));
-                }
-
-                // Simulate IMU data
                 const imuData = {
                     type: 'IMU',
                     username: username,
                     deviceId: deviceId,
                     timestamp: Date.now(),
                     accel: {
-                        x: (Math.random() - 0.5) * 2,
-                        y: (Math.random() - 0.5) * 2,
-                        z: 9.8 + (Math.random() - 0.5) * 0.5
+                        x: (Math.random() - 0.5) * 0.2, // Reduced noise
+                        y: (Math.random() - 0.5) * 0.2,
+                        z: 9.8 + (Math.random() - 0.5) * 0.2
                     },
                     gyro: {
-                        x: (Math.random() - 0.5) * 10,
-                        y: (Math.random() - 0.5) * 10,
-                        z: (Math.random() - 0.5) * 10
+                        x: (Math.random() - 0.5) * 2,
+                        y: (Math.random() - 0.5) * 2,
+                        z: (Math.random() - 0.5) * 2
                     },
                     mag: {
-                        x: (Math.random() - 0.5) * 100,
-                        y: (Math.random() - 0.5) * 100,
-                        z: (Math.random() - 0.5) * 100
+                        x: 30 + (Math.random() - 0.5) * 5,
+                        y: -15 + (Math.random() - 0.5) * 5,
+                        z: -40 + (Math.random() - 0.5) * 5
                     }
                 };
 

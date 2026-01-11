@@ -151,6 +151,7 @@ def receive_esp32_data():
                 'lon': data.get('lon'),
                 'alt': data.get('alt'),
                 'speed': data.get('speed'),
+                'accuracy': data.get('accuracy'),
                 'timestamp': data.get('timestamp', datetime.now().isoformat())
             }
             
@@ -288,6 +289,7 @@ def handle_gps_data(data):
                 'lon': data.get('lon'),
                 'alt': data.get('alt'),
                 'speed': data.get('speed'),
+                'accuracy': data.get('accuracy'),
                 'timestamp': data.get('timestamp', datetime.now().isoformat())
             }
             
