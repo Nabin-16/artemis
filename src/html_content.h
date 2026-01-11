@@ -383,15 +383,26 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
         }
 
-        function registerUser() {
+        function registerUser(isAutoLogin = false) {
             username = document.getElementById('username').value;
             deviceId = document.getElementById('deviceId').value;
 
+            if (!username || !deviceId) {
+                 if(isAutoLogin) return; // Silent fail on auto-login
+                 alert("Please enter both Username and Device ID");
+                 return;
+            }
+
             if (!ws || ws.readyState !== WebSocket.OPEN) {
-                document.getElementById('registerError').textContent =
-                    'Not connected to ESP32. Please connect to WiFi network "esp32"';
+                const msg = 'Not connected to ESP32. Please connect to WiFi network "esp32"';
+                document.getElementById('registerError').textContent = msg;
+                if(!isAutoLogin) alert(msg);
                 return;
             }
+
+            // Save to LocalStorage
+            localStorage.setItem('artemis_username', username);
+            localStorage.setItem('artemis_deviceId', deviceId);
 
             const registerMsg = {
                 type: 'REGISTER',
@@ -532,6 +543,10 @@ const char index_html[] PROGMEM = R"rawliteral(
             if (sensorInterval) {
                 clearInterval(sensorInterval);
             }
+            // Clear LocalStorage on explicit logout
+            localStorage.removeItem('artemis_username');
+            localStorage.removeItem('artemis_deviceId');
+            
             if (ws) {
                 ws.close();
             }
@@ -540,11 +555,32 @@ const char index_html[] PROGMEM = R"rawliteral(
             document.getElementById('appSection').classList.add('hidden');
             document.getElementById('dataSharingToggle').checked = false;
             dataSharingEnabled = false;
+            
+            // Clear inputs
+            document.getElementById('username').value = '';
+            document.getElementById('deviceId').value = '';
         }
 
         // Initialize WebSocket on page load
         window.addEventListener('load', () => {
             connectWebSocket();
+            
+            // Check for saved credentials
+            const savedUser = localStorage.getItem('artemis_username');
+            const savedDevice = localStorage.getItem('artemis_deviceId');
+            
+            if (savedUser && savedDevice) {
+                document.getElementById('username').value = savedUser;
+                document.getElementById('deviceId').value = savedDevice;
+                
+                // Try to auto-login when socket connects
+                const checkSocket = setInterval(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        registerUser(true); // true = isAutoLogin
+                        clearInterval(checkSocket);
+                    }
+                }, 500);
+            }
         });
     </script>
 </body>
