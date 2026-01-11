@@ -3,13 +3,13 @@
 
 // ====== WiFi Configuration ======
 // ESP32 Access Point credentials (connect to this WiFi from your phone)
-const char *WIFI_SSID = "";
-const char *WIFI_PASSWORD = "";
+const char *WIFI_SSID = "ESP32";
+const char *WIFI_PASSWORD = "12345678";
 
 // Home WiFi credentials (for internet/Flask server connection)
 // TODO: ENTER YOUR LAPTOP HOTSPOT NAME AND PASSWORD HERE
-const char *HOME_WIFI_SSID = "";
-const char *HOME_WIFI_PASSWORD = "";
+const char *HOME_WIFI_SSID = "riyospace";
+const char *HOME_WIFI_PASSWORD = "02242005";
 
 // ====== Flask Server Configuration ======
 // Change this to your laptop's IP address
