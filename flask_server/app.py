@@ -25,6 +25,38 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 # Store active devices and their data
 active_devices = {}
 device_history = {}
+DEVICE_TIMEOUT = 30  # Seconds before marking device offline
+
+# Background thread to check for inactive devices
+def check_device_activity():
+    while True:
+        socketio.sleep(10)
+        try:
+            now = datetime.now()
+            to_remove = []
+            
+            for device_id, device in active_devices.items():
+                if device['status'] == 'online':
+                    last_seen = datetime.fromisoformat(device['lastSeen'])
+                    if (now - last_seen).total_seconds() > DEVICE_TIMEOUT:
+                        device['status'] = 'offline'
+                        logger.info(f'Device timeout: {device_id}')
+                        to_remove.append(device_id)
+                        
+                        socketio.emit('device_disconnected', {
+                            'deviceId': device_id,
+                            'username': device['username']
+                        })
+            
+            # Optional: Remove completely instead of just marking offline
+            for device_id in to_remove:
+                del active_devices[device_id]
+                
+        except Exception as e:
+            logger.error(f'Error in watchdog: {e}')
+
+# Start watchdog
+socketio.start_background_task(check_device_activity)
 
 # Authentication (simple example - use proper auth in production)
 ADMIN_USERS = {
@@ -127,6 +159,19 @@ def receive_esp32_data():
             # Broadcast to all connected dashboards
             socketio.emit('device_registered', device_info)
             
+        elif msg_type == 'USER_DISCONNECT':
+            device_id = data.get('deviceId')
+            if device_id in active_devices:
+                active_devices[device_id]['status'] = 'offline'
+                # Remove from list completely to clean up UI
+                del active_devices[device_id]
+                
+                socketio.emit('device_disconnected', {
+                    'deviceId': device_id, 
+                    'username': data.get('username')
+                })
+                logger.info(f'Device explicitly disconnected: {device_id}')
+
         elif msg_type == 'GPS':
             device_id = data.get('deviceId')
             username = data.get('username', 'Unknown')

@@ -47,22 +47,22 @@ void sendToFlaskServer(const String &jsonString)
         return;
     }
 
-    Serial.println("📡 Forwarding data to Flask server...");
+    // Serial.println("📡 Forwarding data to Flask server..."); // Reduced serial spam
     HTTPClient http;
     String serverUrl = String("http://") + FLASK_SERVER_IP + ":" + String(FLASK_SERVER_PORT) + "/api/esp32/data";
 
-    Serial.printf("   URL: %s\n", serverUrl.c_str());
+    // Serial.printf("   URL: %s\n", serverUrl.c_str());
 
     http.begin(serverUrl);
-    http.setTimeout(3000); // 3 second timeout
+    http.setTimeout(1000); // Reduce timeout to 1s to prevent blocking loop
     http.addHeader("Content-Type", "application/json");
-    Serial.printf("   Data: %s\n", jsonString.c_str());
+    http.addHeader("Connection", "keep-alive"); // Attempt to keep connection alive
 
     int httpResponseCode = http.POST(jsonString);
 
     if (httpResponseCode > 0)
     {
-        Serial.printf("✅ Data forwarded to Flask: %d\n", httpResponseCode);
+        // Serial.printf("✅ Data forwarded to Flask: %d\n", httpResponseCode);
     }
     else
     {
@@ -96,6 +96,9 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
             String alertMsg;
             serializeJson(alertDoc, alertMsg);
             ws.textAll(alertMsg);
+
+            // Notify Flask Server about disconnection
+            queueForFlask(alertDoc);
         }
     }
     else if (type == WS_EVT_DATA)

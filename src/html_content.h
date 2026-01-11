@@ -430,14 +430,21 @@ const char index_html[] PROGMEM = R"rawliteral(
 
         function startSensorSimulation() {
             // 1. Start Real GPS Tracking (Geolocation API)
+            // Throttle GPS updates to prevent flooding the ESP32 (send max once per 2 seconds)
+            let lastGpsTime = 0;
+            
             if ("geolocation" in navigator) {
                 navigator.geolocation.watchPosition(
                     (position) => {
+                        const now = Date.now();
+                        if (now - lastGpsTime < 2000) return; // Throttle: Skip if less than 2s since last update
+                        lastGpsTime = now;
+
                         const gpsData = {
                             type: 'GPS',
                             username: username,
                             deviceId: deviceId,
-                            timestamp: Date.now(),
+                            timestamp: now,
                             lat: position.coords.latitude,
                             lon: position.coords.longitude,
                             alt: position.coords.altitude || 0,
@@ -445,7 +452,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                             speed: (position.coords.speed || 0) * 3.6 // Convert m/s to km/h
                         };
                         
-                        // Update UI
+                        // Update UI always (so user sees real-time value locally)
                         document.getElementById('gpsLat').textContent = gpsData.lat.toFixed(6);
                         document.getElementById('gpsLon').textContent = gpsData.lon.toFixed(6);
                         document.getElementById('gpsAlt').textContent = gpsData.alt.toFixed(1) + ' m';
@@ -458,41 +465,23 @@ const char index_html[] PROGMEM = R"rawliteral(
                     },
                     (error) => {
                         console.error("GPS Error: ", error);
-                        let errorMsg = "Unknown Error";
-                        switch(error.code) {
-                            case error.PERMISSION_DENIED:
-                                errorMsg = "Permission Denied. Please Allow Location Access.";
-                                break;
-                            case error.POSITION_UNAVAILABLE:
-                                errorMsg = "Signal Weak. Go outside.";
-                                break;
-                            case error.TIMEOUT:
-                                errorMsg = "Timeout. Retrying...";
-                                break;
-                        }
-                        alert("GPS Failed: " + errorMsg + "\n\nNote: Modern browsers inhibit GPS on HTTP. You may need to enable 'Insecure origins treated as secure' in chrome://flags if testing on Android.");
-                        
-                        // Valid fallback for testing if real GPS fails
-                        const fallbackData = {
-                            type: 'GPS',
-                            username: username,
-                            deviceId: deviceId,
-                            timestamp: Date.now(),
-                            lat: 26.8065,  // Dharan Center
-                            lon: 87.2846, 
-                            alt: 349,
-                            speed: 0
-                        };
-                        
-                        if (dataSharingEnabled && ws && ws.readyState === WebSocket.OPEN) {
-                             // Send fallback data so the user at least sees the dot
-                            ws.send(JSON.stringify(fallbackData));
+                        // Only alert once per minute to avoid spamming user
+                        const now = Date.now();
+                        if (now - lastGpsTime > 60000) {
+                            lastGpsTime = now;
+                            let errorMsg = "Unknown Error";
+                            switch(error.code) {
+                                case error.PERMISSION_DENIED: errorMsg = "Permission Denied."; break;
+                                case error.POSITION_UNAVAILABLE: errorMsg = "Signal Weak."; break;
+                                case error.TIMEOUT: errorMsg = "Timeout."; break;
+                            }
+                            // alert("GPS Failed: " + errorMsg); // Disable alert to be less annoying
                         }
                     },
                     {
                         enableHighAccuracy: true,
                         maximumAge: 0,
-                        timeout: 10000 
+                        timeout: 5000 
                     }
                 );
             } else {
