@@ -266,6 +266,10 @@ const char index_html[] PROGMEM = R"rawliteral(
             <!-- Main App Section -->
             <div class="section hidden" id="appSection">
                 <h2>Device Control</h2>
+                
+                <div id="secure-warning" class="info-box" style="display:none; background:#fff3cd; color:#856404; border-color:#ffeeba;">
+                     ⚠️ <strong>HTTP Detected</strong>: GPS may be blocked. See toggle for fix.
+                </div>
 
                 <div class="data-display">
                     <div class="data-row">
@@ -276,6 +280,10 @@ const char index_html[] PROGMEM = R"rawliteral(
                         <span class="data-label">Device ID:</span>
                         <span class="data-value" id="displayDeviceId">-</span>
                     </div>
+                    <div class="data-row">
+                        <span class="data-label">Sharing Status:</span>
+                        <span class="data-value" id="sharingStatusValue"><span style="color:#f44336">In-active</span></span>
+                    </div>
                 </div>
 
                 <div class="toggle-container">
@@ -283,6 +291,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                         <strong>Enable Data Sharing</strong>
                         <p style="font-size: 12px; color: #666; margin-top: 5px;">Share GPS & IMU data with dashboard
                         </p>
+                        <p id="gpsStatusText" style="font-size: 12px; color: #f44336; margin-top: 5px; font-weight: bold;"></p>
                     </div>
                     <label class="toggle-switch">
                         <input type="checkbox" id="dataSharingToggle" onchange="toggleDataSharing()">
@@ -342,34 +351,52 @@ const char index_html[] PROGMEM = R"rawliteral(
         // Simulate sensor data (in real app, you'd get this from device sensors)
         let sensorInterval = null;
 
+        function debugLog(msg) {
+            console.log(msg);
+        }
+
         function connectWebSocket() {
-            const esp32IP = '192.168.4.1'; // ESP32 AP IP
-            ws = new WebSocket(`ws://${esp32IP}/ws`);
+            if(ws) ws.close(); // Close existing if any
 
-            ws.onopen = () => {
-                console.log('Connected to ESP32');
-                updateConnectionStatus(true);
-            };
+            // Dynamic host: connects to 192.168.4.1 (AP) or Router IP (Station) automatically
+            const host = window.location.hostname;
+            const port = window.location.port ? ':' + window.location.port : '';
+            const wsUrl = `ws://${host}${port}/ws`;
+            
+            console.log("Attempting connection to: " + wsUrl);
+            document.getElementById('connectionStatus').textContent = 'Connecting...';
+            
+            try {
+                ws = new WebSocket(wsUrl);
 
-            ws.onclose = () => {
-                console.log('Disconnected from ESP32');
-                updateConnectionStatus(false);
-                setTimeout(connectWebSocket, 3000);
-            };
+                ws.onopen = () => {
+                    console.log("WebSocket Connected!");
+                    updateConnectionStatus(true);
+                };
 
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                updateConnectionStatus(false);
-            };
+                ws.onclose = (e) => {
+                    console.log("Closed. Code: " + e.code);
+                    updateConnectionStatus(false);
+                    // Retry
+                    setTimeout(connectWebSocket, 3000);
+                };
 
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    handleMessage(data);
-                } catch (e) {
-                    console.error('Error parsing message:', e);
-                }
-            };
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    updateConnectionStatus(false);
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleMessage(data);
+                    } catch (e) {
+                        console.error('Error parsing message:', e);
+                    }
+                };
+            } catch (err) {
+                console.error("Critical Error: " + err.message);
+            }
         }
 
         function updateConnectionStatus(connected) {
@@ -377,9 +404,31 @@ const char index_html[] PROGMEM = R"rawliteral(
             if (connected) {
                 statusEl.textContent = 'Connected';
                 statusEl.classList.add('connected');
+                statusEl.style.backgroundColor = '#4caf50';
+                statusEl.title = "";
             } else {
                 statusEl.textContent = 'Disconnected';
                 statusEl.classList.remove('connected');
+                statusEl.style.backgroundColor = '';
+                statusEl.title = "Connection Lost";
+            }
+        }
+
+        function updateConnectionStatus(connected, url = '', reason = '') {
+            const statusEl = document.getElementById('connectionStatus');
+            if (connected) {
+                statusEl.textContent = 'Connected';
+                statusEl.classList.add('connected');
+                statusEl.style.backgroundColor = '#4caf50';
+            } else {
+                statusEl.textContent = `Disconnected (${reason})`;
+                statusEl.classList.remove('connected');
+                statusEl.style.backgroundColor = '#f44336';
+                
+                // Show debug info only when disconnected
+                if(url) {
+                   statusEl.title = `Failed to connect to: ${url}`;
+                }
             }
         }
 
@@ -426,8 +475,19 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
         }
 
+        let watchId = null;
+
         function toggleDataSharing() {
             dataSharingEnabled = document.getElementById('dataSharingToggle').checked;
+            const statusEl = document.getElementById('gpsStatusText');
+
+            // Update sharing status text
+            const shareStatusEl = document.getElementById('sharingStatusValue');
+            if (dataSharingEnabled) {
+                shareStatusEl.innerHTML = '<span style="color:#4caf50">✅ Live (GPS + IMU)</span>';
+            } else {
+                shareStatusEl.innerHTML = '<span style="color:#f44336">⛔ Paused</span>';
+            }
 
             const msg = {
                 type: 'ENABLE_SHARING',
@@ -437,78 +497,108 @@ const char index_html[] PROGMEM = R"rawliteral(
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify(msg));
             }
+
+            if (dataSharingEnabled) {
+                // User explicitly asked to enable sharing -> Request GPS
+                if ("geolocation" in navigator) {
+                    statusEl.textContent = "Requesting GPS access...";
+                    statusEl.style.color = "#FF9800"; // Orange
+
+                    watchId = navigator.geolocation.watchPosition(
+                        (position) => {
+                            statusEl.textContent = "GPS Active - Tracking";
+                            statusEl.style.color = "#4caf50"; // Green
+                            handleGpsPosition(position);
+                        },
+                        (error) => {
+                            console.error("GPS Error: ", error);
+                            let errorMsg = "Unknown Error";
+                            switch(error.code) {
+                                case error.PERMISSION_DENIED: 
+                                    if (!window.isSecureContext) {
+                                        errorMsg = "Blocked by Browser (HTTP). Check Chrome Flags.";
+                                        alert("🛑 GPS BLOCKED DUE TO HTTP\n\nMobile browsers require HTTPS for GPS.\n\nFIX (Chrome):\n1. Go to 'chrome://flags'\n2. Search 'unsafely-treat-insecure-origin-as-secure'\n3. Enable it\n4. Add this device IP (e.g., http://192.168.4.1)\n5. Relaunch Chrome");
+                                    } else {
+                                        errorMsg = "Permission Denied! Check Phone Settings."; 
+                                    }
+                                    break;
+                                case error.POSITION_UNAVAILABLE: errorMsg = "Signal Weak / Unavailable."; break;
+                                case error.TIMEOUT: errorMsg = "GPS Timeout."; break;
+                            }
+                            statusEl.textContent = errorMsg;
+                            statusEl.style.color = "#f44336"; // Red
+                            // If permission denied, maybe uncheck the toggle?
+                            if(error.code === error.PERMISSION_DENIED) {
+                                document.getElementById('dataSharingToggle').checked = false;
+                                dataSharingEnabled = false;
+                            }
+                        },
+                        {
+                            enableHighAccuracy: true,
+                            maximumAge: 0,
+                            timeout: 10000 
+                        }
+                    );
+                } else {
+                    alert("Geolocation is not supported by your browser");
+                    statusEl.textContent = "GPS Not Supported";
+                }
+            } else {
+                // Stop tracking
+                if (watchId !== null) {
+                    navigator.geolocation.clearWatch(watchId);
+                    watchId = null;
+                }
+                statusEl.textContent = "";
+            }
+        }
+
+        // Extracted GPS Handler
+        let lastGpsTime = 0;
+        function handleGpsPosition(position) {
+            const now = Date.now();
+            if (now - lastGpsTime < 2000) return; // Throttle
+            lastGpsTime = now;
+
+            const gpsData = {
+                type: 'GPS',
+                username: username,
+                deviceId: deviceId,
+                timestamp: now,
+                lat: position.coords.latitude,
+                lon: position.coords.longitude,
+                alt: position.coords.altitude || 0,
+                accuracy: position.coords.accuracy || 0,
+                speed: (position.coords.speed || 0) * 3.6
+            };
+            
+            // UI Update
+            document.getElementById('gpsLat').textContent = gpsData.lat.toFixed(6);
+            document.getElementById('gpsLon').textContent = gpsData.lon.toFixed(6);
+            document.getElementById('gpsAlt').textContent = gpsData.alt.toFixed(1) + ' m';
+            document.getElementById('gpsSpeed').textContent = gpsData.speed.toFixed(1) + ' km/h';
+
+            // Send
+            if (dataSharingEnabled && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(gpsData));
+            }
         }
 
         function startSensorSimulation() {
-            // 1. Start Real GPS Tracking (Geolocation API)
-            // Throttle GPS updates to prevent flooding the ESP32 (send max once per 2 seconds)
-            let lastGpsTime = 0;
+            // IMU Simulation Logic (Accelerometers)
+            // Separate from GPS so it runs even if GPS fails
+            if (sensorInterval) clearInterval(sensorInterval);
             
-            if ("geolocation" in navigator) {
-                navigator.geolocation.watchPosition(
-                    (position) => {
-                        const now = Date.now();
-                        if (now - lastGpsTime < 2000) return; // Throttle: Skip if less than 2s since last update
-                        lastGpsTime = now;
-
-                        const gpsData = {
-                            type: 'GPS',
-                            username: username,
-                            deviceId: deviceId,
-                            timestamp: now,
-                            lat: position.coords.latitude,
-                            lon: position.coords.longitude,
-                            alt: position.coords.altitude || 0,
-                            accuracy: position.coords.accuracy || 0, // Add accuracy
-                            speed: (position.coords.speed || 0) * 3.6 // Convert m/s to km/h
-                        };
-                        
-                        // Update UI always (so user sees real-time value locally)
-                        document.getElementById('gpsLat').textContent = gpsData.lat.toFixed(6);
-                        document.getElementById('gpsLon').textContent = gpsData.lon.toFixed(6);
-                        document.getElementById('gpsAlt').textContent = gpsData.alt.toFixed(1) + ' m';
-                        document.getElementById('gpsSpeed').textContent = gpsData.speed.toFixed(1) + ' km/h';
-
-                        // Send to ESP32
-                        if (dataSharingEnabled && ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify(gpsData));
-                        }
-                    },
-                    (error) => {
-                        console.error("GPS Error: ", error);
-                        // Only alert once per minute to avoid spamming user
-                        const now = Date.now();
-                        if (now - lastGpsTime > 60000) {
-                            lastGpsTime = now;
-                            let errorMsg = "Unknown Error";
-                            switch(error.code) {
-                                case error.PERMISSION_DENIED: errorMsg = "Permission Denied."; break;
-                                case error.POSITION_UNAVAILABLE: errorMsg = "Signal Weak."; break;
-                                case error.TIMEOUT: errorMsg = "Timeout."; break;
-                            }
-                            // alert("GPS Failed: " + errorMsg); // Disable alert to be less annoying
-                        }
-                    },
-                    {
-                        enableHighAccuracy: true,
-                        maximumAge: 0,
-                        timeout: 5000 
-                    }
-                );
-            } else {
-                alert("Geolocation is not supported by your browser");
-            }
-
-            // 2. Simulate IMU data (accelerometer/gyro)
-            // (Only simulating IMU because web browsers don't give raw IMU easily on all devices yet)
             sensorInterval = setInterval(() => {
+                if(!dataSharingEnabled) return; // Only process if enabled
+
                 const imuData = {
                     type: 'IMU',
                     username: username,
                     deviceId: deviceId,
                     timestamp: Date.now(),
                     accel: {
-                        x: (Math.random() - 0.5) * 0.2, // Reduced noise
+                        x: (Math.random() - 0.5) * 0.2, // Low noise (Stationary)
                         y: (Math.random() - 0.5) * 0.2,
                         z: 9.8 + (Math.random() - 0.5) * 0.2
                     },
@@ -523,8 +613,15 @@ const char index_html[] PROGMEM = R"rawliteral(
                         z: -40 + (Math.random() - 0.5) * 5
                     }
                 };
+                
+                // Occasional "Fall" Simulation for testing (every ~30s)
+                /*
+                if (Math.random() < 0.05) {
+                    imuData.accel.z = 28.0; // Spike > 25 m/s^2
+                }
+                */
 
-                // Update UI
+                // UI Update
                 document.getElementById('imuAccel').textContent =
                     `${imuData.accel.x.toFixed(2)}, ${imuData.accel.y.toFixed(2)}, ${imuData.accel.z.toFixed(2)} m/s²`;
                 document.getElementById('imuGyro').textContent =
@@ -532,8 +629,8 @@ const char index_html[] PROGMEM = R"rawliteral(
                 document.getElementById('imuMag').textContent =
                     `${imuData.mag.x.toFixed(1)}, ${imuData.mag.y.toFixed(1)}, ${imuData.mag.z.toFixed(1)} µT`;
 
-                // Send to ESP32 if data sharing is enabled
-                if (dataSharingEnabled && ws && ws.readyState === WebSocket.OPEN) {
+                // Send
+                if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify(imuData));
                 }
             }, 1000);
@@ -564,6 +661,12 @@ const char index_html[] PROGMEM = R"rawliteral(
         // Initialize WebSocket on page load
         window.addEventListener('load', () => {
             connectWebSocket();
+
+            // Check Secure Context
+            if (!window.isSecureContext) {
+                const warningEl = document.getElementById('secure-warning');
+                if(warningEl) warningEl.style.display = 'block';
+            }
             
             // Check for saved credentials
             const savedUser = localStorage.getItem('artemis_username');

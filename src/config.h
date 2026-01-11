@@ -3,7 +3,7 @@
 
 // ====== WiFi Configuration ======
 // ESP32 Access Point credentials (connect to this WiFi from your phone)
-const char *WIFI_SSID = "ESP32";
+const char *WIFI_SSID = "ESP325";
 const char *WIFI_PASSWORD = "12345678";
 
 // Home WiFi credentials (for internet/Flask server connection)

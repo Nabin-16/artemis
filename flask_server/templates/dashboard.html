@@ -357,6 +357,27 @@
             color: #ccc;
         }
 
+        .alert-toast.critical {
+            border-left-color: #ff0000;
+            background: rgba(40, 0, 0, 0.95);
+            animation: pulse-red 1s infinite alternate;
+        }
+
+        .alert-toast.critical .alert-title {
+            color: #ff0000;
+            font-size: 16px;
+        }
+
+        @keyframes pulse-red {
+            from {
+                box-shadow: 0 0 10px rgba(255, 0, 0, 0.2);
+            }
+
+            to {
+                box-shadow: 0 0 20px rgba(255, 0, 0, 0.6);
+            }
+        }
+
         .alert-actions {
             margin-left: 10px;
             display: flex;
@@ -697,9 +718,47 @@
 
             device.imu = imu;
 
+            // FALL DETECTION LOGIC
+            // Calculate magnitude of acceleration vector (in m/s^2 if that's what we send)
+            // v = sqrt(x^2 + y^2 + z^2)
+            // Normal gravity is ~9.8. Fall impact is usually > 25 (approx 2.5g)
+            const magnitude = Math.sqrt(Math.pow(imu.accel.x, 2) + Math.pow(imu.accel.y, 2) + Math.pow(imu.accel.z, 2));
+
+            // Check for Impact (> 25 m/s^2)
+            // Add a cooldown to prevent spamming alerts (e.g., using a timestamp on the device object)
+            if (magnitude > 25.0) {
+                const now = Date.now();
+                if (!device.lastFallAlert || (now - device.lastFallAlert > 5000)) {
+                    device.lastFallAlert = now;
+                    showFallAlert(device, deviceId, magnitude);
+                }
+            }
+
             if (selectedDevice === deviceId) {
                 updateDeviceDetails(device);
             }
+        }
+
+        function showFallAlert(device, deviceId, magnitude) {
+            const container = document.getElementById('alert-container');
+            const alert = document.createElement('div');
+            alert.className = 'alert-toast critical'; // Critical style
+            alert.innerHTML = `
+                <div class="alert-content">
+                    <div class="alert-title">🚨 FALL DETECTED!</div>
+                    <div class="alert-message">${device.username} (${deviceId}) impact: ${magnitude.toFixed(1)} m/s²</div>
+                </div>
+                <div class="alert-actions">
+                    <button class="alert-btn" onclick="focusDevice('${deviceId}')">Locate</button>
+                    <button class="alert-btn close" onclick="this.parentElement.parentElement.remove()">✕</button>
+                </div>
+            `;
+            container.appendChild(alert);
+
+            // Auto remove after 15 seconds
+            setTimeout(() => {
+                if (alert.parentNode) alert.remove();
+            }, 15000);
         }
 
         function markDeviceOffline(deviceId) {

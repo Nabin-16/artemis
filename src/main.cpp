@@ -54,7 +54,7 @@ void sendToFlaskServer(const String &jsonString)
     // Serial.printf("   URL: %s\n", serverUrl.c_str());
 
     http.begin(serverUrl);
-    http.setTimeout(1000); // Reduce timeout to 1s to prevent blocking loop
+    http.setTimeout(2000); // 2 seconds timeout
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Connection", "keep-alive"); // Attempt to keep connection alive
 
